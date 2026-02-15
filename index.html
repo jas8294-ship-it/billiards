@@ -9,6 +9,7 @@
     body { margin: 0; padding: 24px; background: #fafafa; color: #111; }
     .wrap { max-width: 980px; margin: 0 auto; }
     h1 { font-size: 20px; margin: 0 0 12px; }
+
     .controls{
       display:flex; flex-wrap:wrap; gap:12px; align-items:end;
       padding:12px; background:#fff; border:1px solid #e6e6e6; border-radius:12px;
@@ -25,10 +26,23 @@
     }
     .hint{ font-size:13px; color:#444; margin-top:6px; flex-basis:100%; }
     .err{ color:#b00020; font-size:13px; margin-top:6px; min-height:1em; flex-basis:100%; }
+
+    /* --------- FIX: make the animation smaller ---------
+       Canvas has TWO sizes:
+       1) internal pixel buffer: width/height attributes in HTML (for crispness)
+       2) displayed size: CSS width/height (for on-page size)
+       We set internal to 600x600 (sharp), display to 420x420 (compact).
+    ----------------------------------------------------- */
     canvas{
-      width:100%; height:auto; background:#fff;
-      border:1px solid #e6e6e6; border-radius:12px;
+      width: 420px;
+      height: 420px;
+      background:#fff;
+      border:1px solid #e6e6e6;
+      border-radius:12px;
+      display:block;
+      margin: 0 auto; /* center it */
     }
+
     code{ background:#f2f2f2; padding:2px 6px; border-radius:6px; }
   </style>
 </head>
@@ -55,13 +69,15 @@
     <button id="drawBtn">Draw</button>
 
     <div class="hint">
-      Try: <code>pi/3</code> (triangle), <code>pi/4</code> (square), <code>pi/5</code> (pentagon), <code>sqrt(2)/5</code> (typically nonperiodic-looking).
+      Try: <code>pi/3</code> (triangle), <code>pi/4</code> (square), <code>pi/5</code> (pentagon),
+      <code>sqrt(2)/5</code> (typically nonperiodic-looking).
       Must have <code>0 &lt; α ≤ pi/2</code>.
     </div>
     <div id="err" class="err"></div>
   </div>
 
-  <canvas id="cv" width="500" height="500"></canvas>
+  <!-- FIX: increase internal resolution for crisp drawing, but keep CSS size smaller -->
+  <canvas id="cv" width="600" height="600"></canvas>
 </div>
 
 <script>
@@ -84,7 +100,7 @@ function parseAngle(expr){
     throw new Error("Angle contains invalid characters.");
   }
   expr = expr.replace(/\bPI\b/g, "pi").replace(/\bPi\b/g, "pi");
-  const fn = new Function("pi","sqrt","sin","cos", return (${expr}););
+  const fn = new Function("pi","sqrt","sin","cos", `return (${expr});`);
   const val = fn(allowed.pi, allowed.sqrt, allowed.sin, allowed.cos);
   if (!Number.isFinite(val)) throw new Error("Angle did not evaluate to a finite number.");
   return val;
@@ -124,34 +140,32 @@ function simulateWithInteriorStart(alpha, bounces){
   const d_in0  = unit(reflect(d_out0, n0)); // (sin a, cos a)
 
   // Choose an interior start point along incoming ray to q
-  // Max distance along the chord inside the disk from q in direction -d_in0 is 2*sin(alpha).
   const sMax = 2 * Math.sin(alpha);
   const s = (0.15 + 0.75*Math.random()) * sMax; // avoid too close to boundary/center
   const p0 = sub(q, scale(d_in0, s));
 
-  // Caustic radius for circular billiard with impact angle alpha (from tangent):
+  // Caustic radius for circular billiard with impact angle alpha (from tangent)
   const causticRadius = Math.cos(alpha);
 
-  // Now run billiard from p0 with velocity d_in0 until first hit (which is q by construction),
-  // then continue with reflections.
+  // Run billiard: start at p0 heading toward q
   let p = p0.slice();
   let d = d_in0.slice();
 
   const pts = [p.slice(), q.slice()];
 
-  // Set state right after first collision (outgoing direction)
+  // After first collision at q
   d = d_out0.slice();
   p = q.slice();
 
   for (let i=1; i<bounces; i++){
-    // next hit: t = -2 (p·d) since |p|=1 and |d|=1
+    // Next hit time tau = -2 (p·d) for unit circle with |p|=|d|=1 and p on boundary
     const pd = dot(p, d);
     let tau = -2 * pd;
     if (tau <= 1e-12) tau = 1e-12;
 
     const qNext = add(p, scale(d, tau));
-    const n = unit(qNext);
-    d = unit(reflect(d, n));
+    const n = unit(qNext);       // outward normal at hit point
+    d = unit(reflect(d, n));     // reflect
     p = qNext;
     pts.push(p.slice());
   }
@@ -211,7 +225,7 @@ function draw(state){
   const ctx = cv.getContext("2d");
   const W = cv.width, H = cv.height;
 
-  const pad = 40;
+  const pad = 60; // slightly larger padding for 600x600 internal resolution
   const cx = W/2, cy = H/2;
   const Rpx = Math.min(W, H)/2 - pad;
 
@@ -285,6 +299,9 @@ function rebuild(){
       u: 0,
       speed
     };
+
+    // reset animation clock so it doesn't "jump" after redraw
+    lastT = null;
 
     draw(state);
   } catch(e){
