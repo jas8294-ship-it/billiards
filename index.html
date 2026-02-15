@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Circular Billiards: Trajectory + Caustic</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    body { margin: 0; padding: 24px; background: #fafafa; color: #111; }
+    .wrap { max-width: 980px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .panel { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: end;
+      padding: 12px; background: #fff; border: 1px solid #e6e6e6; border-radius: 12px;
+    }
+    label { display: grid; gap: 6px; font-size: 13px; }
+    input {
+      padding: 10px 12px; border: 1px solid #d8d8d8; border-radius: 10px; font-size: 14px;
+      width: 220px;
+    }
+    button {
+      padding: 10px 14px; border: 1px solid #d8d8d8; border-radius: 10px;
+      background: #111; color: #fff; font-size: 14px; cursor: pointer;
+    }
+    button:active { transform: translateY(1px); }
+    .hint { font-size: 13px; color: #444; margin-top: 6px; }
+    .err { color: #b00020; font-size: 13px; margin-top: 6px; min-height: 1em; }
+    canvas {
+      width: 100%; height: auto; background: #fff;
+      border: 1px solid #e6e6e6; border-radius: 12px;
+    }
+    .footer { font-size: 12px; color: #555; margin-top: 10px; }
+    code { background: #f2f2f2; padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Circular Billiards (Trajectory + Caustic)</h1>
+
+  <div class="panel">
+    <div class="controls">
+      <label>
+        Angle (radians, from tangent)
+        <input id="angle" value="pi/4" placeholder="e.g. pi/3, 0.7, sqrt(2)/5" />
+      </label>
+
+      <label>
+        Number of bounces
+        <input id="bounces" type="number" min="1" step="1" value="120" />
+      </label>
+
+      <button id="drawBtn">Draw</button>
+
+      <div style="flex-basis:100%"></div>
+      <div class="hint">
+        Try: <code>pi/3</code> (periodic), <code>pi/4</code> (periodic), <code>sqrt(2)/5</code> (typically nonperiodic-looking),
+        <code>pi/2</code> (diameter).
+      </div>
+      <div id="err" class="err"></div>
+    </div>
+
+    <canvas id="cv" width="900" height="900"></canvas>
+
+    <div class="footer">
+      Model: unit circle billiard with specular reflection. Caustic radius is <code>cos(angle)</code>.
+    </div>
+  </div>
+</div>
+
+<script>
+/** --- Math helpers --- **/
+function dot(a,b){ return a[0]*b[0] + a[1]*b[1]; }
+function norm(a){ return Math.hypot(a[0], a[1]); }
+function scale(a,s){ return [a[0]*s, a[1]*s]; }
+function add(a,b){ return [a[0]+b[0], a[1]+b[1]]; }
+function sub(a,b){ return [a[0]-b[0], a[1]-b[1]]; }
+function unit(a){
+  const n = norm(a);
+  return n === 0 ? [0,0] : [a[0]/n, a[1]/n];
+}
+function reflect(v, nUnit){
+  // reflect across tangent plane with outward normal nUnit (unit)
+  // v' = v - 2 (v·n) n
+  const vn = dot(v, nUnit);
+  return sub(v, scale(nUnit, 2*vn));
+}
+
+/** --- Safe-ish expression parser for angle --- **/
+function parseAngle(expr){
+  // allow numbers + pi + sqrt + sin + cos + parentheses + basic ops
+  // Convert to a Function with a restricted scope.
+  // (For a classroom demo, this is usually fine; don’t use for untrusted public input at scale.)
+  const allowed = {
+    pi: Math.PI,
+    sqrt: Math.sqrt,
+    sin: Math.sin,
+    cos: Math.cos
+  };
+
+  // Basic whitelist: only permit these characters
+  if (!/^[0-9+\-*/().\s a-zA-Z]+$/.test(expr)) {
+    throw new Error("Angle contains invalid characters.");
+  }
+
+  // Replace common 'PI' / 'Pi'
+  expr = expr.replace(/\bPI\b/g, "pi").replace(/\bPi\b/g, "pi");
+
+  const fn = new Function("pi","sqrt","sin","cos", `return (${expr});`);
+  const val = fn(allowed.pi, allowed.sqrt, allowed.sin, allowed.cos);
+
+  if (!Number.isFinite(val)) throw new Error("Angle did not evaluate to a finite number.");
+  return val;
+}
+
+/** --- Core billiard simulation in unit circle --- **/
+function simulate(angleRad, bounces, startAngleRad = 0){
+  if (!(angleRad > 0 && angleRad <= Math.PI/2 + 1e-14)) {
+    throw new Error("Angle must be in (0, pi/2].");
+  }
+  if (!(Number.isInteger(bounces) && bounces >= 1)) {
+    throw new Error("Bounces must be a positive integer.");
+  }
+
+  const R = 1.0;
+
+  // Start point on boundary
+  let p = [Math.cos(startAngleRad)*R, Math.sin(startAngleRad)*R];
+
+  // Tangent (CCW) and inward normal at start
+  const tangent = [-Math.sin(startAngleRad), Math.cos(startAngleRad)];
+  const inward = unit(scale(p, -1));
+
+  // Direction: rotate tangent toward inward by angleRad
+  let d = unit(add(scale(tangent, Math.cos(angleRad)), scale(inward, Math.sin(angleRad))));
+
+  const pts = [p];
+
+  for (let i=0; i<bounces; i++){
+    // Next intersection with circle:
+    // Since |p|=R, solve |p + t d|^2 = R^2 => t^2 + 2 (p·d) t = 0 => t = -2(p·d)
+    const pd = dot(p, d);
+    let t = -2 * pd;
+
+    // numerical guard (near grazing)
+    if (t <= 1e-12) t = 1e-12;
+
+    const q = add(p, scale(d, t));
+    const n = unit(q); // outward normal
+    d = unit(reflect(d, n));
+    p = q;
+    pts.push(p);
+  }
+
+  const causticRadius = Math.cos(angleRad) * R;
+  return { pts, causticRadius };
+}
+
+/** --- Drawing --- **/
+function drawPlot(pts, causticRadius){
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+
+  ctx.clearRect(0,0,W,H);
+
+  // Map unit disk to canvas with padding
+  const pad = 40;
+  const cx = W/2, cy = H/2;
+  const scalePix = Math.min(W,H)/2 - pad;
+
+  function toXY(p){
+    return [cx + p[0]*scalePix, cy - p[1]*scalePix];
+  }
+
+  // background
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0,0,W,H);
+
+  // outer circle
+  ctx.strokeStyle = "#111";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(cx, cy, scalePix, 0, 2*Math.PI);
+  ctx.stroke();
+
+  // caustic (dashed)
+  ctx.strokeStyle = "#444";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([10, 8]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(0, causticRadius)*scalePix, 0, 2*Math.PI);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // trajectory
+  ctx.strokeStyle = "#0a0a0a";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  const [x0,y0] = toXY(pts[0]);
+  ctx.moveTo(x0,y0);
+  for (let i=1; i<pts.length; i++){
+    const [x,y] = toXY(pts[i]);
+    ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // small markers for first few collision points
+  ctx.fillStyle = "#111";
+  for (let i=0; i<Math.min(pts.length, 6); i++){
+    const [x,y] = toXY(pts[i]);
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, 2*Math.PI);
+    ctx.fill();
+  }
+}
+
+/** --- UI wiring --- **/
+function run(){
+  const errEl = document.getElementById("err");
+  errEl.textContent = "";
+
+  try{
+    const angleExpr = document.getElementById("angle").value.trim();
+    const bounces = parseInt(document.getElementById("bounces").value, 10);
+
+    const angleRad = parseAngle(angleExpr);
+    const { pts, causticRadius } = simulate(angleRad, bounces);
+
+    drawPlot(pts, causticRadius);
+  } catch(e){
+    errEl.textContent = e.message || String(e);
+  }
+}
+
+document.getElementById("drawBtn").addEventListener("click", run);
+document.getElementById("angle").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") run(); });
+document.getElementById("bounces").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") run(); });
+
+// draw once on load
+run();
+</script>
+</body>
+</html>
