@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Circular Billiards: Trajectory + Caustic</title>
+  <title>Circular Billiards: Trajectory + Caustic + Animated Particle</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
     body { margin: 0; padding: 24px; background: #fafafa; color: #111; }
@@ -19,11 +19,11 @@
       padding: 10px 12px; border: 1px solid #d8d8d8; border-radius: 10px; font-size: 14px;
       width: 240px;
     }
-    .row { display: flex; gap: 10px; align-items: center; }
     .check {
       display: flex; gap: 8px; align-items: center; font-size: 13px; user-select: none;
       padding: 10px 12px; border: 1px solid #d8d8d8; border-radius: 10px; background: #fff;
     }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     button {
       padding: 10px 14px; border: 1px solid #d8d8d8; border-radius: 10px;
       background: #111; color: #fff; font-size: 14px; cursor: pointer;
@@ -42,7 +42,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Circular Billiards (Trajectory + Caustic)</h1>
+  <h1>Circular Billiards (Trajectory + Caustic + Animated Particle)</h1>
 
   <div class="panel">
     <div class="controls">
@@ -53,21 +53,32 @@
 
       <label>
         Number of bounces
-        <input id="bounces" type="number" min="1" step="1" value="200" />
+        <input id="bounces" type="number" min="1" step="1" value="250" />
+      </label>
+
+      <label>
+        Particle speed (units/sec)
+        <input id="speed" type="number" min="0.05" step="0.05" value="0.9" />
       </label>
 
       <div class="row">
-        <label class="check" title="Choose a random starting point on the boundary each draw.">
+        <label class="check" title="Choose a random starting boundary point each draw.">
           <input id="randomStart" type="checkbox" checked />
           Random start point
         </label>
 
-        <button id="randomizeBtn" class="secondary" title="Pick a new random start point and redraw.">
+        <button id="randomizeStartBtn" class="secondary" title="Pick a new random start point and redraw.">
           Randomize start
         </button>
-      </div>
 
-      <button id="drawBtn">Draw</button>
+        <button id="randomizeParticleBtn" class="secondary" title="Place the particle at a random location along the orbit.">
+          Randomize particle
+        </button>
+
+        <button id="playPauseBtn">Pause</button>
+
+        <button id="drawBtn">Draw</button>
+      </div>
 
       <div style="flex-basis:100%"></div>
       <div class="hint">
@@ -79,13 +90,13 @@
     <canvas id="cv" width="900" height="900"></canvas>
 
     <div class="footer">
-      Unit circle billiard with specular reflection. Caustic radius is <code>cos(angle)</code>. The particle dot marks the starting point.
+      Unit circle billiard with specular reflection. Caustic radius is <code>cos(angle)</code>. Particle moves along the computed polyline at constant arc-length speed.
     </div>
   </div>
 </div>
 
 <script>
-/** --- Math helpers --- **/
+/** --- Vector helpers --- **/
 function dot(a,b){ return a[0]*b[0] + a[1]*b[1]; }
 function norm(a){ return Math.hypot(a[0], a[1]); }
 function scale(a,s){ return [a[0]*s, a[1]*s]; }
@@ -113,7 +124,7 @@ function parseAngle(expr){
   return val;
 }
 
-/** --- Core simulation --- **/
+/** --- Core billiard simulation (unit circle) --- **/
 function simulate(angleRad, bounces, startAngleRad){
   if (!(angleRad > 0 && angleRad <= Math.PI/2 + 1e-14)) {
     throw new Error("Angle must be in (0, pi/2].");
@@ -124,27 +135,27 @@ function simulate(angleRad, bounces, startAngleRad){
 
   const R = 1.0;
 
-  // Start point on boundary at polar angle startAngleRad
+  // Start point on boundary
   let p = [Math.cos(startAngleRad)*R, Math.sin(startAngleRad)*R];
 
   // Tangent (CCW) and inward normal at start
   const tangent = [-Math.sin(startAngleRad), Math.cos(startAngleRad)];
   const inward = unit(scale(p, -1));
 
-  // Direction: rotate tangent toward inward by angleRad
+  // Initial direction: rotate tangent toward inward by angleRad
   let d = unit(add(scale(tangent, Math.cos(angleRad)), scale(inward, Math.sin(angleRad))));
 
   const pts = [p];
 
   for (let i=0; i<bounces; i++){
-    // Next intersection with circle: t = -2 (p·d)
+    // Next intersection with circle: t = -2 (p·d) since |p|=1
     const pd = dot(p, d);
     let t = -2 * pd;
     if (t <= 1e-12) t = 1e-12;
 
     const q = add(p, scale(d, t));
-    const n = unit(q);            // outward normal (radial)
-    d = unit(reflect(d, n));      // specular reflection
+    const n = unit(q);       // outward normal
+    d = unit(reflect(d, n)); // specular reflection
     p = q;
     pts.push(p);
   }
@@ -153,8 +164,46 @@ function simulate(angleRad, bounces, startAngleRad){
   return { pts, causticRadius };
 }
 
+/** --- Build arc-length parameterization for particle motion --- **/
+function buildArc(pts){
+  // Returns cumulative lengths s[i] (s[0]=0), segment lengths, total length
+  const s = new Array(pts.length).fill(0);
+  let total = 0;
+  for (let i=1; i<pts.length; i++){
+    const dx = pts[i][0] - pts[i-1][0];
+    const dy = pts[i][1] - pts[i-1][1];
+    const L = Math.hypot(dx, dy);
+    total += L;
+    s[i] = total;
+  }
+  return { s, total };
+}
+
+function pointAtArc(pts, sArr, total, u){
+  // u in [0, total): returns point along polyline
+  // Wrap around
+  let t = u % total;
+  if (t < 0) t += total;
+
+  // Find segment by linear scan (fine for a few hundred bounces)
+  let i = 1;
+  while (i < sArr.length && sArr[i] < t) i++;
+
+  if (i >= sArr.length) return pts[pts.length - 1];
+
+  const s0 = sArr[i-1];
+  const s1 = sArr[i];
+  const segLen = s1 - s0;
+  const w = segLen > 0 ? (t - s0) / segLen : 0;
+
+  const p0 = pts[i-1], p1 = pts[i];
+  return [p0[0] + w*(p1[0]-p0[0]), p0[1] + w*(p1[1]-p0[1])];
+}
+
 /** --- Drawing --- **/
-function drawPlot(pts, causticRadius){
+function drawScene(state){
+  const { pts, causticRadius, particlePos } = state;
+
   const cv = document.getElementById("cv");
   const ctx = cv.getContext("2d");
   const W = cv.width, H = cv.height;
@@ -201,26 +250,31 @@ function drawPlot(pts, causticRadius){
   }
   ctx.stroke();
 
-  // particle dot at starting point
+  // collision point markers (first few)
   ctx.fillStyle = "#111";
-  ctx.beginPath();
-  ctx.arc(x0, y0, 7, 0, 2*Math.PI);
-  ctx.fill();
-
-  // small markers for first few collision points (optional; helps students see the map)
-  ctx.fillStyle = "#111";
-  for (let i=1; i<Math.min(pts.length, 6); i++){
+  for (let i=0; i<Math.min(pts.length, 6); i++){
     const [x,y] = toXY(pts[i]);
     ctx.beginPath();
     ctx.arc(x, y, 4, 0, 2*Math.PI);
     ctx.fill();
   }
+
+  // particle
+  const [px, py] = toXY(particlePos);
+  ctx.fillStyle = "#111";
+  ctx.beginPath();
+  ctx.arc(px, py, 7, 0, 2*Math.PI);
+  ctx.fill();
 }
 
-/** --- UI state --- **/
+/** --- UI + animation state --- **/
 let currentStartAngle = Math.random() * 2*Math.PI;
 
-function run(forceNewRandomStart=false){
+let simState = null;    // { pts, causticRadius, arcS, arcTotal, u }
+let playing = true;
+let lastTime = null;
+
+function rebuildSimulation(forceNewRandomStart=false){
   const errEl = document.getElementById("err");
   errEl.textContent = "";
 
@@ -230,32 +284,70 @@ function run(forceNewRandomStart=false){
     const angleRad = parseAngle(angleExpr);
 
     const useRandomStart = document.getElementById("randomStart").checked;
-
     if (useRandomStart && (forceNewRandomStart || currentStartAngle == null)) {
       currentStartAngle = Math.random() * 2*Math.PI;
     }
-    if (!useRandomStart) {
-      // fixed start point: choose (1,0)
-      currentStartAngle = 0.0;
-    }
+    if (!useRandomStart) currentStartAngle = 0.0;
 
     const { pts, causticRadius } = simulate(angleRad, bounces, currentStartAngle);
-    drawPlot(pts, causticRadius);
+    const { s: arcS, total: arcTotal } = buildArc(pts);
+
+    // start particle at a random arc-length location
+    const u0 = Math.random() * arcTotal;
+
+    simState = { pts, causticRadius, arcS, arcTotal, u: u0 };
+
+    // draw initial frame
+    const particlePos = pointAtArc(pts, arcS, arcTotal, simState.u);
+    drawScene({ pts, causticRadius, particlePos });
 
   } catch(e){
+    simState = null;
     errEl.textContent = e.message || String(e);
   }
 }
 
-document.getElementById("drawBtn").addEventListener("click", ()=>run(false));
-document.getElementById("randomizeBtn").addEventListener("click", ()=>run(true));
+function randomizeParticle(){
+  if (!simState) return;
+  simState.u = Math.random() * simState.arcTotal;
+}
 
-document.getElementById("angle").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") run(false); });
-document.getElementById("bounces").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") run(false); });
-document.getElementById("randomStart").addEventListener("change", ()=>run(false));
+function tick(ts){
+  if (lastTime == null) lastTime = ts;
+  const dt = (ts - lastTime) / 1000.0;
+  lastTime = ts;
 
-// draw once on load
-run(true);
+  if (simState){
+    const speed = Math.max(0, parseFloat(document.getElementById("speed").value || "0.9"));
+    if (playing){
+      simState.u += speed * dt; // arc-length per second
+    }
+    const particlePos = pointAtArc(simState.pts, simState.arcS, simState.arcTotal, simState.u);
+    drawScene({ pts: simState.pts, causticRadius: simState.causticRadius, particlePos });
+  }
+
+  requestAnimationFrame(tick);
+}
+
+/** --- Wire up controls --- **/
+document.getElementById("drawBtn").addEventListener("click", ()=>rebuildSimulation(false));
+document.getElementById("randomizeStartBtn").addEventListener("click", ()=>rebuildSimulation(true));
+document.getElementById("randomizeParticleBtn").addEventListener("click", ()=>{
+  randomizeParticle();
+});
+
+document.getElementById("playPauseBtn").addEventListener("click", ()=>{
+  playing = !playing;
+  document.getElementById("playPauseBtn").textContent = playing ? "Pause" : "Play";
+});
+
+document.getElementById("randomStart").addEventListener("change", ()=>rebuildSimulation(false));
+document.getElementById("angle").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") rebuildSimulation(false); });
+document.getElementById("bounces").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") rebuildSimulation(false); });
+
+/** --- Start --- **/
+rebuildSimulation(true);
+requestAnimationFrame(tick);
 </script>
 </body>
 </html>
