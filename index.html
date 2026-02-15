@@ -3,46 +3,46 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Circular Billiards: Trajectory + Caustic + Animated Particle</title>
+  <title>Circular Billiards: Orbit + Caustic + Animated Particle</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
     body { margin: 0; padding: 24px; background: #fafafa; color: #111; }
     .wrap { max-width: 980px; margin: 0 auto; }
     h1 { font-size: 20px; margin: 0 0 12px; }
     .panel { display: grid; grid-template-columns: 1fr; gap: 12px; }
-    .controls {
-      display: flex; flex-wrap: wrap; gap: 12px; align-items: end;
-      padding: 12px; background: #fff; border: 1px solid #e6e6e6; border-radius: 12px;
+    .controls{
+      display:flex; flex-wrap:wrap; gap:12px; align-items:end;
+      padding:12px; background:#fff; border:1px solid #e6e6e6; border-radius:12px;
     }
-    label { display: grid; gap: 6px; font-size: 13px; }
+    label{ display:grid; gap:6px; font-size:13px; }
     input[type="text"], input[type="number"]{
-      padding: 10px 12px; border: 1px solid #d8d8d8; border-radius: 10px; font-size: 14px;
-      width: 240px;
+      padding:10px 12px; border:1px solid #d8d8d8; border-radius:10px; font-size:14px;
+      width:240px;
     }
-    .check {
-      display: flex; gap: 8px; align-items: center; font-size: 13px; user-select: none;
-      padding: 10px 12px; border: 1px solid #d8d8d8; border-radius: 10px; background: #fff;
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .check{
+      display:flex; gap:8px; align-items:center; font-size:13px; user-select:none;
+      padding:10px 12px; border:1px solid #d8d8d8; border-radius:10px; background:#fff;
     }
-    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    button {
-      padding: 10px 14px; border: 1px solid #d8d8d8; border-radius: 10px;
-      background: #111; color: #fff; font-size: 14px; cursor: pointer;
+    button{
+      padding:10px 14px; border:1px solid #d8d8d8; border-radius:10px;
+      background:#111; color:#fff; font-size:14px; cursor:pointer;
     }
-    button.secondary { background: #fff; color: #111; }
-    button:active { transform: translateY(1px); }
-    .hint { font-size: 13px; color: #444; margin-top: 6px; }
-    .err { color: #b00020; font-size: 13px; margin-top: 6px; min-height: 1em; }
-    canvas {
-      width: 100%; height: auto; background: #fff;
-      border: 1px solid #e6e6e6; border-radius: 12px;
+    button.secondary{ background:#fff; color:#111; }
+    button:active{ transform:translateY(1px); }
+    .hint{ font-size:13px; color:#444; margin-top:6px; }
+    .err{ color:#b00020; font-size:13px; margin-top:6px; min-height:1em; }
+    canvas{
+      width:100%; height:auto; background:#fff;
+      border:1px solid #e6e6e6; border-radius:12px;
     }
-    .footer { font-size: 12px; color: #555; margin-top: 10px; }
-    code { background: #f2f2f2; padding: 2px 6px; border-radius: 6px; }
+    .footer{ font-size:12px; color:#555; margin-top:10px; }
+    code{ background:#f2f2f2; padding:2px 6px; border-radius:6px; }
   </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Circular Billiards (Trajectory + Caustic + Animated Particle)</h1>
+  <h1>Circular Billiards (🔵 orbit, 🟢 caustic, 🔴 particle)</h1>
 
   <div class="panel">
     <div class="controls">
@@ -62,16 +62,16 @@
       </label>
 
       <div class="row">
-        <label class="check" title="Choose a random starting boundary point each draw.">
-          <input id="randomStart" type="checkbox" checked />
-          Random start point
+        <label class="check" title="Random starting boundary angle used to set the initial direction.">
+          <input id="randomBoundaryDir" type="checkbox" checked />
+          Random direction seed
         </label>
 
-        <button id="randomizeStartBtn" class="secondary" title="Pick a new random start point and redraw.">
-          Randomize start
+        <button id="randomizeBtn" class="secondary" title="New random interior start + direction seed.">
+          Randomize
         </button>
 
-        <button id="randomizeParticleBtn" class="secondary" title="Place the particle at a random location along the orbit.">
+        <button id="randomizeParticleBtn" class="secondary" title="Place particle at a random point along the already-computed path.">
           Randomize particle
         </button>
 
@@ -83,6 +83,7 @@
       <div style="flex-basis:100%"></div>
       <div class="hint">
         Try: <code>pi/3</code>, <code>pi/4</code>, <code>sqrt(2)/5</code>, <code>pi/2</code>.
+        Angle must be in <code>(0, pi/2]</code>.
       </div>
       <div id="err" class="err"></div>
     </div>
@@ -90,7 +91,8 @@
     <canvas id="cv" width="900" height="900"></canvas>
 
     <div class="footer">
-      Unit circle billiard with specular reflection. Caustic radius is <code>cos(angle)</code>. Particle moves along the computed polyline at constant arc-length speed.
+      Particle starts at a random point inside the disk, moves to the boundary, then reflects.
+      Caustic shown has radius <code>cos(angle)</code>.
     </div>
   </div>
 </div>
@@ -111,7 +113,7 @@ function reflect(v, nUnit){
   return sub(v, scale(nUnit, 2*vn));
 }
 
-/** --- Expression parser for angle --- **/
+/** --- Parse angle expression like pi/3, sqrt(2)/5 --- **/
 function parseAngle(expr){
   const allowed = { pi: Math.PI, sqrt: Math.sqrt, sin: Math.sin, cos: Math.cos };
   if (!/^[0-9+\-*/().\s a-zA-Z]+$/.test(expr)) {
@@ -124,38 +126,48 @@ function parseAngle(expr){
   return val;
 }
 
-/** --- Core billiard simulation (unit circle) --- **/
-function simulate(angleRad, bounces, startAngleRad){
+/** --- Simulate from an INTERIOR start point --- **/
+function simulateFromInterior(angleRad, bounces, startPoint, boundarySeedAngleRad){
   if (!(angleRad > 0 && angleRad <= Math.PI/2 + 1e-14)) {
     throw new Error("Angle must be in (0, pi/2].");
   }
   if (!(Number.isInteger(bounces) && bounces >= 1)) {
     throw new Error("Bounces must be a positive integer.");
   }
-
   const R = 1.0;
+  if (norm(startPoint) >= R) {
+    throw new Error("Start point must be strictly inside the circle.");
+  }
 
-  // Start point on boundary
-  let p = [Math.cos(startAngleRad)*R, Math.sin(startAngleRad)*R];
+  // Define initial direction using a "seed" boundary angle phi:
+  // tangent(phi) rotated toward inward(phi) by angleRad.
+  const phi = boundarySeedAngleRad;
+  const tangent = [-Math.sin(phi), Math.cos(phi)];
+  const inwardAtPhi = [-Math.cos(phi), -Math.sin(phi)];
+  let d = unit(add(scale(tangent, Math.cos(angleRad)), scale(inwardAtPhi, Math.sin(angleRad))));
 
-  // Tangent (CCW) and inward normal at start
-  const tangent = [-Math.sin(startAngleRad), Math.cos(startAngleRad)];
-  const inward = unit(scale(p, -1));
+  // First intersection from interior: solve |p + t d|^2 = 1 for t>0, with |d|=1
+  let p = startPoint.slice();
+  const pd = dot(p, d);
+  const disc = pd*pd + (R*R - dot(p,p));
+  if (disc <= 0) throw new Error("No boundary intersection found (numerical issue).");
+  const tHit = -pd + Math.sqrt(disc);
 
-  // Initial direction: rotate tangent toward inward by angleRad
-  let d = unit(add(scale(tangent, Math.cos(angleRad)), scale(inward, Math.sin(angleRad))));
+  let q = add(p, scale(d, tHit));
+  const pts = [p, q];
 
-  const pts = [p];
+  // Reflect and continue
+  let n = unit(q);       // outward normal at boundary point
+  d = unit(reflect(d, n));
+  p = q;
 
-  for (let i=0; i<bounces; i++){
-    // Next intersection with circle: t = -2 (p·d) since |p|=1
-    const pd = dot(p, d);
-    let t = -2 * pd;
+  for (let i=1; i<bounces; i++){
+    const pd2 = dot(p, d);
+    let t = -2 * pd2;    // since p is on boundary now (unit circle)
     if (t <= 1e-12) t = 1e-12;
-
-    const q = add(p, scale(d, t));
-    const n = unit(q);       // outward normal
-    d = unit(reflect(d, n)); // specular reflection
+    q = add(p, scale(d, t));
+    n = unit(q);
+    d = unit(reflect(d, n));
     p = q;
     pts.push(p);
   }
@@ -164,9 +176,8 @@ function simulate(angleRad, bounces, startAngleRad){
   return { pts, causticRadius };
 }
 
-/** --- Build arc-length parameterization for particle motion --- **/
+/** --- Arc-length parameterization for animation --- **/
 function buildArc(pts){
-  // Returns cumulative lengths s[i] (s[0]=0), segment lengths, total length
   const s = new Array(pts.length).fill(0);
   let total = 0;
   for (let i=1; i<pts.length; i++){
@@ -176,23 +187,18 @@ function buildArc(pts){
     total += L;
     s[i] = total;
   }
-  return { s, total };
+  return { s, total: Math.max(total, 1e-12) };
 }
 
 function pointAtArc(pts, sArr, total, u){
-  // u in [0, total): returns point along polyline
-  // Wrap around
   let t = u % total;
   if (t < 0) t += total;
 
-  // Find segment by linear scan (fine for a few hundred bounces)
   let i = 1;
   while (i < sArr.length && sArr[i] < t) i++;
-
   if (i >= sArr.length) return pts[pts.length - 1];
 
-  const s0 = sArr[i-1];
-  const s1 = sArr[i];
+  const s0 = sArr[i-1], s1 = sArr[i];
   const segLen = s1 - s0;
   const w = segLen > 0 ? (t - s0) / segLen : 0;
 
@@ -200,7 +206,7 @@ function pointAtArc(pts, sArr, total, u){
   return [p0[0] + w*(p1[0]-p0[0]), p0[1] + w*(p1[1]-p0[1])];
 }
 
-/** --- Drawing --- **/
+/** --- Draw (🔵 orbit, 🟢 caustic, 🔴 particle) --- **/
 function drawScene(state){
   const { pts, causticRadius, particlePos } = state;
 
@@ -222,25 +228,25 @@ function drawScene(state){
   ctx.fillStyle = "#fff";
   ctx.fillRect(0,0,W,H);
 
-  // outer circle
+  // boundary
   ctx.strokeStyle = "#111";
   ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.arc(cx, cy, scalePix, 0, 2*Math.PI);
   ctx.stroke();
 
-  // caustic (dashed)
-  ctx.strokeStyle = "#444";
-  ctx.lineWidth = 2;
+  // 🟢 caustic
+  ctx.strokeStyle = "green";
+  ctx.lineWidth = 2.5;
   ctx.setLineDash([10, 8]);
   ctx.beginPath();
   ctx.arc(cx, cy, Math.max(0, causticRadius)*scalePix, 0, 2*Math.PI);
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // trajectory
-  ctx.strokeStyle = "#0a0a0a";
-  ctx.lineWidth = 1.6;
+  // 🔵 orbit polyline
+  ctx.strokeStyle = "blue";
+  ctx.lineWidth = 2;
   ctx.beginPath();
   const [x0,y0] = toXY(pts[0]);
   ctx.moveTo(x0,y0);
@@ -250,52 +256,51 @@ function drawScene(state){
   }
   ctx.stroke();
 
-  // collision point markers (first few)
-  ctx.fillStyle = "#111";
-  for (let i=0; i<Math.min(pts.length, 6); i++){
-    const [x,y] = toXY(pts[i]);
-    ctx.beginPath();
-    ctx.arc(x, y, 4, 0, 2*Math.PI);
-    ctx.fill();
-  }
-
-  // particle
+  // 🔴 particle
   const [px, py] = toXY(particlePos);
-  ctx.fillStyle = "#111";
+  ctx.fillStyle = "red";
   ctx.beginPath();
-  ctx.arc(px, py, 7, 0, 2*Math.PI);
+  ctx.arc(px, py, 8, 0, 2*Math.PI);
   ctx.fill();
 }
 
 /** --- UI + animation state --- **/
-let currentStartAngle = Math.random() * 2*Math.PI;
-
-let simState = null;    // { pts, causticRadius, arcS, arcTotal, u }
+let simState = null;   // { pts, causticRadius, arcS, arcTotal, u }
 let playing = true;
 let lastTime = null;
 
-function rebuildSimulation(forceNewRandomStart=false){
+function randomInteriorPoint(){
+  // uniform-ish in disk via r = sqrt(U)
+  const u = Math.random();
+  const r = Math.sqrt(u) * 0.98; // keep safely inside
+  const th = Math.random() * 2*Math.PI;
+  return [r*Math.cos(th), r*Math.sin(th)];
+}
+
+function rebuildSimulation(forceRandomizeAll=false){
   const errEl = document.getElementById("err");
   errEl.textContent = "";
 
   try{
     const angleExpr = document.getElementById("angle").value.trim();
     const bounces = parseInt(document.getElementById("bounces").value, 10);
+    const speed = Math.max(0, parseFloat(document.getElementById("speed").value || "0.9"));
+    if (!Number.isFinite(speed)) throw new Error("Speed must be a number.");
+
     const angleRad = parseAngle(angleExpr);
 
-    const useRandomStart = document.getElementById("randomStart").checked;
-    if (useRandomStart && (forceNewRandomStart || currentStartAngle == null)) {
-      currentStartAngle = Math.random() * 2*Math.PI;
-    }
-    if (!useRandomStart) currentStartAngle = 0.0;
+    // start point inside disk
+    const startPoint = randomInteriorPoint();
 
-    const { pts, causticRadius } = simulate(angleRad, bounces, currentStartAngle);
+    // direction seed: random boundary angle unless unchecked (fixed at 0)
+    const useRandomDir = document.getElementById("randomBoundaryDir").checked;
+    const boundarySeed = useRandomDir ? (Math.random() * 2*Math.PI) : 0.0;
+
+    const { pts, causticRadius } = simulateFromInterior(angleRad, bounces, startPoint, boundarySeed);
     const { s: arcS, total: arcTotal } = buildArc(pts);
 
-    // start particle at a random arc-length location
-    const u0 = Math.random() * arcTotal;
-
-    simState = { pts, causticRadius, arcS, arcTotal, u: u0 };
+    // Start particle at the interior start point (u = 0), so you see it trace the orbit from the inside
+    simState = { pts, causticRadius, arcS, arcTotal, u: 0.0, speed };
 
     // draw initial frame
     const particlePos = pointAtArc(pts, arcS, arcTotal, simState.u);
@@ -320,7 +325,7 @@ function tick(ts){
   if (simState){
     const speed = Math.max(0, parseFloat(document.getElementById("speed").value || "0.9"));
     if (playing){
-      simState.u += speed * dt; // arc-length per second
+      simState.u += speed * dt;
     }
     const particlePos = pointAtArc(simState.pts, simState.arcS, simState.arcTotal, simState.u);
     drawScene({ pts: simState.pts, causticRadius: simState.causticRadius, particlePos });
@@ -329,19 +334,16 @@ function tick(ts){
   requestAnimationFrame(tick);
 }
 
-/** --- Wire up controls --- **/
+/** --- Wire controls --- **/
 document.getElementById("drawBtn").addEventListener("click", ()=>rebuildSimulation(false));
-document.getElementById("randomizeStartBtn").addEventListener("click", ()=>rebuildSimulation(true));
-document.getElementById("randomizeParticleBtn").addEventListener("click", ()=>{
-  randomizeParticle();
-});
+document.getElementById("randomizeBtn").addEventListener("click", ()=>rebuildSimulation(true));
+document.getElementById("randomizeParticleBtn").addEventListener("click", ()=>randomizeParticle());
 
 document.getElementById("playPauseBtn").addEventListener("click", ()=>{
   playing = !playing;
   document.getElementById("playPauseBtn").textContent = playing ? "Pause" : "Play";
 });
 
-document.getElementById("randomStart").addEventListener("change", ()=>rebuildSimulation(false));
 document.getElementById("angle").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") rebuildSimulation(false); });
 document.getElementById("bounces").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") rebuildSimulation(false); });
 
