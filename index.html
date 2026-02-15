@@ -1,370 +1,207 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Circular Billiards: Tracing Orbit + Caustic + Animated Particle</title>
-  <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    body { margin: 0; padding: 24px; background: #fafafa; color: #111; }
-    .wrap { max-width: 980px; margin: 0 auto; }
-    h1 { font-size: 20px; margin: 0 0 12px; }
-    .panel { display: grid; grid-template-columns: 1fr; gap: 12px; }
-    .controls{
-      display:flex; flex-wrap:wrap; gap:12px; align-items:end;
-      padding:12px; background:#fff; border:1px solid #e6e6e6; border-radius:12px;
-    }
-    label{ display:grid; gap:6px; font-size:13px; }
-    input[type="text"], input[type="number"]{
-      padding:10px 12px; border:1px solid #d8d8d8; border-radius:10px; font-size:14px;
-      width:240px;
-    }
-    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .check{
-      display:flex; gap:8px; align-items:center; font-size:13px; user-select:none;
-      padding:10px 12px; border:1px solid #d8d8d8; border-radius:10px; background:#fff;
-    }
-    button{
-      padding:10px 14px; border:1px solid #d8d8d8; border-radius:10px;
-      background:#111; color:#fff; font-size:14px; cursor:pointer;
-    }
-    button.secondary{ background:#fff; color:#111; }
-    button:active{ transform:translateY(1px); }
-    .hint{ font-size:13px; color:#444; margin-top:6px; }
-    .err{ color:#b00020; font-size:13px; margin-top:6px; min-height:1em; }
-    canvas{
-      width:100%; height:auto; background:#fff;
-      border:1px solid #e6e6e6; border-radius:12px;
-    }
-    .footer{ font-size:12px; color:#555; margin-top:10px; }
-    code{ background:#f2f2f2; padding:2px 6px; border-radius:6px; }
-  </style>
+<meta charset="utf-8">
+<title>Circular Billiard Demo</title>
+<style>
+body { font-family: system-ui; padding:20px; background:#fafafa; }
+.controls { margin-bottom:15px; }
+input { padding:6px; margin-right:10px; }
+button { padding:6px 12px; }
+canvas { background:white; border:1px solid #ccc; }
+</style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Circular Billiards (🔵 traced orbit, 🟢 caustic, 🔴 particle)</h1>
 
-  <div class="panel">
-    <div class="controls">
-      <label>
-        Angle (radians, from tangent)
-        <input id="angle" type="text" value="pi/4" placeholder="e.g. pi/3, 0.7, sqrt(2)/5" />
-      </label>
+<h2>Circular Billiards</h2>
 
-      <label>
-        Number of bounces
-        <input id="bounces" type="number" min="1" step="1" value="250" />
-      </label>
-
-      <label>
-        Particle speed (units/sec)
-        <input id="speed" type="number" min="0.05" step="0.05" value="0.9" />
-      </label>
-
-      <div class="row">
-        <label class="check" title="Random boundary seed used to define the initial direction.">
-          <input id="randomBoundaryDir" type="checkbox" checked />
-          Random direction seed
-        </label>
-
-        <button id="randomizeBtn" class="secondary" title="New random interior start + direction seed.">
-          Randomize
-        </button>
-
-        <button id="playPauseBtn">Pause</button>
-
-        <button id="drawBtn">Draw</button>
-      </div>
-
-      <div style="flex-basis:100%"></div>
-      <div class="hint">
-        Try: <code>pi/3</code>, <code>pi/4</code>, <code>sqrt(2)/5</code>, <code>pi/2</code>.
-        Angle must be in <code>(0, pi/2]</code>.
-      </div>
-      <div id="err" class="err"></div>
-    </div>
-
-    <canvas id="cv" width="900" height="900"></canvas>
-
-    <div class="footer">
-      The particle starts at a random point inside the disk and <b>traces the orbit over time</b>.
-      The caustic radius is computed correctly from the invariant <code>|p × v|</code>.
-    </div>
-  </div>
+<div class="controls">
+  Angle (radians):
+  <input id="angle" value="pi/4">
+  Bounces:
+  <input id="bounces" type="number" value="200">
+  Speed:
+  <input id="speed" type="number" value="0.8" step="0.1">
+  <button onclick="start()">Draw</button>
 </div>
 
+<canvas id="cv" width="700" height="700"></canvas>
+
 <script>
-/** --- Vector helpers --- **/
-function dot(a,b){ return a[0]*b[0] + a[1]*b[1]; }
-function norm(a){ return Math.hypot(a[0], a[1]); }
-function scale(a,s){ return [a[0]*s, a[1]*s]; }
-function add(a,b){ return [a[0]+b[0], a[1]+b[1]]; }
-function sub(a,b){ return [a[0]-b[0], a[1]-b[1]]; }
-function unit(a){
-  const n = norm(a);
-  return n === 0 ? [0,0] : [a[0]/n, a[1]/n];
-}
-function reflect(v, nUnit){
-  const vn = dot(v, nUnit);
-  return sub(v, scale(nUnit, 2*vn));
-}
+/* ---------- Utilities ---------- */
 
-/** --- Parse angle expression like pi/3, sqrt(2)/5 --- **/
 function parseAngle(expr){
-  const allowed = { pi: Math.PI, sqrt: Math.sqrt, sin: Math.sin, cos: Math.cos };
-  if (!/^[0-9+\-*/().\s a-zA-Z]+$/.test(expr)) {
-    throw new Error("Angle contains invalid characters.");
-  }
-  expr = expr.replace(/\bPI\b/g, "pi").replace(/\bPi\b/g, "pi");
-  const fn = new Function("pi","sqrt","sin","cos", `return (${expr});`);
-  const val = fn(allowed.pi, allowed.sqrt, allowed.sin, allowed.cos);
-  if (!Number.isFinite(val)) throw new Error("Angle did not evaluate to a finite number.");
-  return val;
+  expr = expr.replace(/pi/g, Math.PI);
+  return eval(expr);
 }
 
-/** --- Random interior point (uniform-ish) --- **/
-function randomInteriorPoint(){
-  const u = Math.random();
-  const r = Math.sqrt(u) * 0.98; // keep safely inside
-  const th = Math.random() * 2*Math.PI;
-  return [r*Math.cos(th), r*Math.sin(th)];
+function dot(a,b){ return a[0]*b[0]+a[1]*b[1]; }
+function norm(a){ return Math.hypot(a[0],a[1]); }
+function unit(a){ let n=norm(a); return [a[0]/n,a[1]/n]; }
+function reflect(v,n){ return [v[0]-2*dot(v,n)*n[0], v[1]-2*dot(v,n)*n[1]]; }
+
+/* ---------- Simulation ---------- */
+
+let sim=null;
+let playing=true;
+let lastTime=null;
+
+function randomInterior(){
+  let r=Math.sqrt(Math.random())*0.95;
+  let t=Math.random()*2*Math.PI;
+  return [r*Math.cos(t), r*Math.sin(t)];
 }
 
-/** --- Simulate from an INTERIOR start point, return polyline + correct caustic --- **/
-function simulateFromInterior(angleRad, bounces, startPoint, boundarySeedAngleRad){
-  if (!(angleRad > 0 && angleRad <= Math.PI/2 + 1e-14)) {
-    throw new Error("Angle must be in (0, pi/2].");
-  }
-  if (!(Number.isInteger(bounces) && bounces >= 1)) {
-    throw new Error("Bounces must be a positive integer.");
-  }
-  const R = 1.0;
-  if (norm(startPoint) >= R) {
-    throw new Error("Start point must be strictly inside the circle.");
-  }
+function simulate(angle,bounces){
 
-  // Direction defined via a seed boundary angle phi:
-  // d = cos(angle)*tangent(phi) + sin(angle)*inward(phi)
-  const phi = boundarySeedAngleRad;
-  const tangent = [-Math.sin(phi), Math.cos(phi)];
-  const inwardAtPhi = [-Math.cos(phi), -Math.sin(phi)];
-  let d = unit(add(scale(tangent, Math.cos(angleRad)), scale(inwardAtPhi, Math.sin(angleRad))));
+  let p=randomInterior();
+  let phi=0; // fixed direction seed
 
-  // ✅ Correct caustic radius for ANY orbit in a circle: invariant impact parameter |p × v|
-  // Here p = startPoint, v = d (unit). This equals the minimum distance from the origin
-  // to the line of motion, i.e. radius of the concentric caustic circle.
-  const causticRadius = Math.abs(startPoint[0]*d[1] - startPoint[1]*d[0]);
+  let tangent=[-Math.sin(phi), Math.cos(phi)];
+  let inward=[-Math.cos(phi), -Math.sin(phi)];
 
-  // First intersection from interior: solve |p + t d|^2 = 1 for t>0 (|d|=1)
-  let p = startPoint.slice();
-  const pd = dot(p, d);
-  const disc = pd*pd + (R*R - dot(p,p));
-  if (disc <= 0) throw new Error("No boundary intersection found (numerical issue).");
-  const tHit = -pd + Math.sqrt(disc);
+  let d=unit([
+    Math.cos(angle)*tangent[0]+Math.sin(angle)*inward[0],
+    Math.cos(angle)*tangent[1]+Math.sin(angle)*inward[1]
+  ]);
 
-  let q = add(p, scale(d, tHit));
-  const pts = [p, q];
+  // Correct caustic radius
+  let caustic=Math.abs(p[0]*d[1]-p[1]*d[0]);
 
-  // Reflect at first hit and continue
-  let n = unit(q);
-  d = unit(reflect(d, n));
-  p = q;
+  let pts=[p];
 
-  for (let i=1; i<bounces; i++){
-    const pd2 = dot(p, d);
-    let t = -2 * pd2; // since p is on boundary now (unit circle)
-    if (t <= 1e-12) t = 1e-12;
-    q = add(p, scale(d, t));
-    n = unit(q);
-    d = unit(reflect(d, n));
-    p = q;
+  // first hit
+  let pd=dot(p,d);
+  let disc=pd*pd+(1-dot(p,p));
+  let tHit=-pd+Math.sqrt(disc);
+  p=[p[0]+tHit*d[0], p[1]+tHit*d[1]];
+  pts.push(p);
+
+  for(let i=1;i<bounces;i++){
+    let n=unit(p);
+    d=unit(reflect(d,n));
+    let t=-2*dot(p,d);
+    p=[p[0]+t*d[0], p[1]+t*d[1]];
     pts.push(p);
   }
 
-  return { pts, causticRadius };
+  return {pts,caustic};
 }
 
-/** --- Arc-length parameterization for animation --- **/
+/* ---------- Arc length ---------- */
+
 function buildArc(pts){
-  const s = new Array(pts.length).fill(0);
-  let total = 0;
-  for (let i=1; i<pts.length; i++){
-    const dx = pts[i][0] - pts[i-1][0];
-    const dy = pts[i][1] - pts[i-1][1];
-    const L = Math.hypot(dx, dy);
-    total += L;
-    s[i] = total;
+  let s=[0], total=0;
+  for(let i=1;i<pts.length;i++){
+    let dx=pts[i][0]-pts[i-1][0];
+    let dy=pts[i][1]-pts[i-1][1];
+    total+=Math.hypot(dx,dy);
+    s.push(total);
   }
-  return { s, total: Math.max(total, 1e-12) };
+  return {s,total};
 }
 
-function pointAtArc(pts, sArr, total, u){
-  let t = u % total;
-  if (t < 0) t += total;
-
-  let i = 1;
-  while (i < sArr.length && sArr[i] < t) i++;
-  if (i >= sArr.length) return pts[pts.length - 1];
-
-  const s0 = sArr[i-1], s1 = sArr[i];
-  const segLen = s1 - s0;
-  const w = segLen > 0 ? (t - s0) / segLen : 0;
-
-  const p0 = pts[i-1], p1 = pts[i];
-  return [p0[0] + w*(p1[0]-p0[0]), p0[1] + w*(p1[1]-p0[1])];
+function pointAt(pts,s,total,u){
+  u=u%total;
+  let i=1;
+  while(i<s.length && s[i]<u) i++;
+  if(i>=s.length) return pts[pts.length-1];
+  let w=(u-s[i-1])/(s[i]-s[i-1]);
+  return [
+    pts[i-1][0]+w*(pts[i][0]-pts[i-1][0]),
+    pts[i-1][1]+w*(pts[i][1]-pts[i-1][1])
+  ];
 }
 
-function tracedPrefix(pts, sArr, u){
-  // Returns points along the polyline from start up to arc-length u,
-  // including an interpolated endpoint on the current segment.
-  const out = [pts[0]];
-  if (u <= 0) return out;
+/* ---------- Drawing ---------- */
 
-  // Find last full vertex with sArr[i] <= u
-  let i = 1;
-  while (i < sArr.length && sArr[i] <= u) {
-    out.push(pts[i]);
-    i++;
-  }
-  if (i >= sArr.length) return out;
+function draw(){
+  let ctx=cv.getContext("2d");
+  ctx.clearRect(0,0,700,700);
 
-  // Add interpolated endpoint between i-1 and i
-  const s0 = sArr[i-1];
-  const s1 = sArr[i];
-  const segLen = s1 - s0;
-  const w = segLen > 0 ? (u - s0) / segLen : 0;
-  const p0 = pts[i-1], p1 = pts[i];
-  out.push([p0[0] + w*(p1[0]-p0[0]), p0[1] + w*(p1[1]-p0[1])]);
-  return out;
-}
+  let cx=350, cy=350, R=300;
 
-/** --- Draw (only the traced part of orbit so far) --- **/
-function drawScene(state){
-  const { pts, arcS, arcTotal, u, causticRadius } = state;
+  function map(p){ return [cx+p[0]*R, cy-p[1]*R]; }
 
-  const cv = document.getElementById("cv");
-  const ctx = cv.getContext("2d");
-  const W = cv.width, H = cv.height;
-
-  ctx.clearRect(0,0,W,H);
-
-  const pad = 40;
-  const cx = W/2, cy = H/2;
-  const scalePix = Math.min(W,H)/2 - pad;
-
-  function toXY(p){ return [cx + p[0]*scalePix, cy - p[1]*scalePix]; }
-
-  // Background
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0,0,W,H);
-
-  // Boundary
-  ctx.strokeStyle = "#111";
-  ctx.lineWidth = 3;
+  // boundary
+  ctx.lineWidth=3;
+  ctx.strokeStyle="#000";
   ctx.beginPath();
-  ctx.arc(cx, cy, scalePix, 0, 2*Math.PI);
+  ctx.arc(cx,cy,R,0,2*Math.PI);
   ctx.stroke();
 
-  // 🟢 Caustic
-  ctx.strokeStyle = "green";
-  ctx.lineWidth = 2.5;
-  ctx.setLineDash([10, 8]);
+  if(!sim) return;
+
+  // caustic
+  ctx.setLineDash([8,6]);
+  ctx.strokeStyle="green";
+  ctx.lineWidth=2;
   ctx.beginPath();
-  ctx.arc(cx, cy, Math.max(0, causticRadius)*scalePix, 0, 2*Math.PI);
+  ctx.arc(cx,cy,sim.caustic*R,0,2*Math.PI);
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Compute traced prefix up to u
-  const traced = tracedPrefix(pts, arcS, Math.min(u, arcTotal));
-
-  // 🔵 Orbit traced so far
-  ctx.strokeStyle = "blue";
-  ctx.lineWidth = 2;
+  // traced orbit
+  ctx.strokeStyle="blue";
+  ctx.lineWidth=2;
   ctx.beginPath();
-  const [x0,y0] = toXY(traced[0]);
-  ctx.moveTo(x0,y0);
-  for (let i=1; i<traced.length; i++){
-    const [x,y] = toXY(traced[i]);
-    ctx.lineTo(x,y);
+  let traced=sim.pts.slice(0,sim.index+1);
+  let m0=map(traced[0]);
+  ctx.moveTo(m0[0],m0[1]);
+  for(let i=1;i<traced.length;i++){
+    let m=map(traced[i]);
+    ctx.lineTo(m[0],m[1]);
   }
   ctx.stroke();
 
-  // 🔴 Particle position at u
-  const particlePos = pointAtArc(pts, arcS, arcTotal, u);
-  const [px, py] = toXY(particlePos);
-  ctx.fillStyle = "red";
+  // particle
+  let pos=pointAt(sim.pts,sim.arc.s,sim.arc.total,sim.u);
+  let m=map(pos);
+  ctx.fillStyle="red";
   ctx.beginPath();
-  ctx.arc(px, py, 8, 0, 2*Math.PI);
+  ctx.arc(m[0],m[1],6,0,2*Math.PI);
   ctx.fill();
 }
 
-/** --- Animation + UI state --- **/
-let simState = null; // { pts, causticRadius, arcS, arcTotal, u }
-let playing = true;
-let lastTime = null;
+/* ---------- Animation ---------- */
 
-function rebuildSimulation(){
-  const errEl = document.getElementById("err");
-  errEl.textContent = "";
+function animate(ts){
+  if(!lastTime) lastTime=ts;
+  let dt=(ts-lastTime)/1000;
+  lastTime=ts;
 
-  try{
-    const angleExpr = document.getElementById("angle").value.trim();
-    const bounces = parseInt(document.getElementById("bounces").value, 10);
-    const angleRad = parseAngle(angleExpr);
-
-    const speed = Math.max(0, parseFloat(document.getElementById("speed").value || "0.9"));
-    if (!Number.isFinite(speed)) throw new Error("Speed must be a number.");
-
-    const startPoint = randomInteriorPoint();
-    const useRandomDir = document.getElementById("randomBoundaryDir").checked;
-    const boundarySeed = useRandomDir ? (Math.random() * 2*Math.PI) : 0.0;
-
-    const { pts, causticRadius } = simulateFromInterior(angleRad, bounces, startPoint, boundarySeed);
-    const { s: arcS, total: arcTotal } = buildArc(pts);
-
-    simState = { pts, causticRadius, arcS, arcTotal, u: 0.0, speed };
-
-    drawScene(simState);
-
-  } catch(e){
-    simState = null;
-    errEl.textContent = e.message || String(e);
-  }
-}
-
-function tick(ts){
-  if (lastTime == null) lastTime = ts;
-  const dt = (ts - lastTime) / 1000.0;
-  lastTime = ts;
-
-  if (simState){
-    const speed = Math.max(0, parseFloat(document.getElementById("speed").value || "0.9"));
-    if (playing){
-      simState.u += speed * dt;
-      // Optional: stop after one full trace instead of looping
-      if (simState.u > simState.arcTotal) simState.u = simState.u % simState.arcTotal;
-    }
-    drawScene(simState);
+  if(sim && playing){
+    sim.u+=sim.speed*dt;
+    sim.index=Math.floor(sim.u/sim.arc.total*(sim.pts.length-1));
   }
 
-  requestAnimationFrame(tick);
+  draw();
+  requestAnimationFrame(animate);
 }
 
-/** --- Wire controls --- **/
-document.getElementById("drawBtn").addEventListener("click", rebuildSimulation);
-document.getElementById("randomizeBtn").addEventListener("click", rebuildSimulation);
+/* ---------- Start ---------- */
 
-document.getElementById("playPauseBtn").addEventListener("click", ()=>{
-  playing = !playing;
-  document.getElementById("playPauseBtn").textContent = playing ? "Pause" : "Play";
-});
+function start(){
+  let angle=parseAngle(document.getElementById("angle").value);
+  let bounces=parseInt(document.getElementById("bounces").value);
+  let speed=parseFloat(document.getElementById("speed").value);
 
-document.getElementById("angle").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") rebuildSimulation(); });
-document.getElementById("bounces").addEventListener("keydown", (ev)=>{ if(ev.key==="Enter") rebuildSimulation(); });
+  let result=simulate(angle,bounces);
+  let arc=buildArc(result.pts);
 
-/** --- Start --- **/
-rebuildSimulation();
-requestAnimationFrame(tick);
+  sim={
+    pts:result.pts,
+    caustic:result.caustic,
+    arc:arc,
+    u:0,
+    speed:speed,
+    index:0
+  };
+}
+
+start();
+requestAnimationFrame(animate);
+
 </script>
 </body>
 </html>
