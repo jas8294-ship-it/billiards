@@ -25,9 +25,10 @@
     }
     .hint{ font-size:13px; color:#444; margin-top:6px; flex-basis:100%; }
     .err{ color:#b00020; font-size:13px; margin-top:6px; min-height:1em; flex-basis:100%; }
-    
- canvas{ width:100%; height:auto; background:#fff; border:1px solid #e6e6e6; border-radius:12px; }
-
+    canvas{
+      width:100%; height:auto; background:#fff;
+      border:1px solid #e6e6e6; border-radius:12px;
+    }
     code{ background:#f2f2f2; padding:2px 6px; border-radius:6px; }
   </style>
 </head>
@@ -83,7 +84,7 @@ function parseAngle(expr){
     throw new Error("Angle contains invalid characters.");
   }
   expr = expr.replace(/\bPI\b/g, "pi").replace(/\bPi\b/g, "pi");
-  const fn = new Function("pi","sqrt","sin","cos", `return (${expr});`);
+  const fn = new Function("pi","sqrt","sin","cos", return (${expr}););
   const val = fn(allowed.pi, allowed.sqrt, allowed.sin, allowed.cos);
   if (!Number.isFinite(val)) throw new Error("Angle did not evaluate to a finite number.");
   return val;
